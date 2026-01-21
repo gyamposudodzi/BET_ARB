@@ -1,4 +1,5 @@
 import asyncio
+from typing import Optional
 from telegram import Bot, Update
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -11,36 +12,73 @@ class TelegramAlertBot:
         self.chat_id = settings.TELEGRAM_CHAT_ID
         self.bot: Optional[Bot] = None
         self.application: Optional[Application] = None
+        self.polling_task: Optional[asyncio.Task] = None
     
-    async def initialize(self):
+    async def initialize(self) -> bool:
         """Initialize Telegram bot"""
         if not self.bot_token:
             logger.warning("Telegram bot token not configured")
             return False
         
+        if not self.chat_id:
+            logger.warning("Telegram chat ID not configured")
+            return False
+        
         try:
+            # Create bot instance
             self.bot = Bot(token=self.bot_token)
+            
+            # Test connection
+            me = await self.bot.get_me()
+            logger.info(f"Telegram bot connected: @{me.username}")
+            
+            # Create application but don't start polling yet
             self.application = Application.builder().token(self.bot_token).build()
             
-            # Register handlers
+            # Register command handlers
             self.application.add_handler(CommandHandler("start", self.start_command))
             self.application.add_handler(CommandHandler("status", self.status_command))
             self.application.add_handler(CommandHandler("stats", self.stats_command))
+            self.application.add_handler(CommandHandler("opportunities", self.opportunities_command))
             self.application.add_handler(CallbackQueryHandler(self.button_callback))
             
-            # Start polling
+            # Initialize application without starting polling
             await self.application.initialize()
-            await self.application.start()
             
-            # Start polling in background
-            asyncio.create_task(self.application.run_polling())
+            # Send startup message
+            await self.send_system_alert(
+                "🤖 Arbitrage Bot Started!\n"
+                f"Minimum profit: {settings.MIN_PROFIT_THRESHOLD}%\n"
+                f"Scan interval: {settings.SCAN_INTERVAL}s",
+                "info"
+            )
             
-            logger.info("✅ Telegram bot initialized")
+            logger.info("✅ Telegram bot initialized (polling not started)")
             return True
             
         except Exception as e:
             logger.error(f"Failed to initialize Telegram bot: {e}")
             return False
+    
+    async def start_polling(self):
+        """Start polling in background"""
+        if self.application and not self.polling_task:
+            self.polling_task = asyncio.create_task(self._run_polling())
+            logger.info("📡 Telegram bot polling started")
+    
+    async def _run_polling(self):
+        """Run polling in background task"""
+        try:
+            await self.application.start()
+            await self.application.updater.start_polling()
+            
+            # Keep the task running
+            await asyncio.Future()  # Run forever
+            
+        except asyncio.CancelledError:
+            logger.info("Telegram polling cancelled")
+        except Exception as e:
+            logger.error(f"Telegram polling error: {e}")
     
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start command"""
@@ -94,10 +132,12 @@ Bot will automatically send alerts when profitable opportunities are found!
     
     async def stats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /stats command"""
-        from database.crud import get_crud
+        from database.crud import CRUD
+        from database.session import get_session
         
         try:
-            async for crud in get_crud():
+            async for session in get_session():
+                crud = CRUD(session)
                 stats = await crud.get_stats()
                 
                 message = f"""
@@ -116,9 +156,35 @@ Bot will automatically send alerts when profitable opportunities are found!
         except Exception as e:
             await update.message.reply_text(f"❌ Error getting stats: {e}")
     
+    async def opportunities_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /opportunities command"""
+        from database.crud import CRUD
+        from database.session import get_session
+        
+        try:
+            async for session in get_session():
+                crud = CRUD(session)
+                opportunities = await crud.get_recent_opportunities(limit=5)
+                
+                if not opportunities:
+                    await update.message.reply_text("No recent opportunities found.")
+                    return
+                
+                message = "📈 *Recent Opportunities:*\n\n"
+                for opp in opportunities:
+                    message += f"• {opp.sport_key}: {opp.profit_percentage}% profit\n"
+                    message += f"  Detected: {opp.detected_at.strftime('%H:%M')}\n\n"
+                
+                await update.message.reply_text(message, parse_mode="Markdown")
+                break
+                
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error getting opportunities: {e}")
+    
     async def send_opportunity_alert(self, opportunity):
         """Send arbitrage opportunity alert"""
-        if not self.bot or not self.chat_id:
+        if not self.bot:
+            logger.warning("Telegram bot not initialized")
             return
         
         try:
@@ -139,7 +205,8 @@ Bot will automatically send alerts when profitable opportunities are found!
     
     async def send_system_alert(self, message: str, level: str = "info"):
         """Send system alert"""
-        if not self.bot or not self.chat_id:
+        if not self.bot:
+            logger.warning("Telegram bot not initialized")
             return
         
         emojis = {
@@ -156,6 +223,7 @@ Bot will automatically send alerts when profitable opportunities are found!
                 chat_id=self.chat_id,
                 text=f"{emoji} {message}"
             )
+            logger.debug(f"Sent system alert: {message}")
         except Exception as e:
             logger.error(f"Failed to send system alert: {e}")
     
@@ -217,6 +285,23 @@ Bot will automatically send alerts when profitable opportunities are found!
     
     async def close(self):
         """Close bot connection"""
-        if self.application:
-            await self.application.stop()
-            await self.application.shutdown()
+        try:
+            if self.polling_task:
+                self.polling_task.cancel()
+                try:
+                    await self.polling_task
+                except asyncio.CancelledError:
+                    pass
+                self.polling_task = None
+            
+            if self.application:
+                await self.application.stop()
+                await self.application.shutdown()
+            
+            if self.bot:
+                await self.bot.close()
+            
+            logger.info("Telegram bot closed")
+            
+        except Exception as e:
+            logger.error(f"Error closing Telegram bot: {e}")

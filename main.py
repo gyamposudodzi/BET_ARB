@@ -5,7 +5,9 @@ import sys
 from pathlib import Path
 from loguru import logger
 from datetime import datetime
-
+import platform
+import signal
+        
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -120,8 +122,20 @@ class ArbitrageBot:
         
         # Setup signal handlers
         loop = asyncio.get_event_loop()
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, lambda: asyncio.create_task(self.shutdown()))
+        
+
+        if platform.system() != "Windows":
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                loop.add_signal_handler(
+                    sig,
+                    lambda sig=sig: asyncio.create_task(self.shutdown())
+                )
+        else:
+            # Windows fallback: Ctrl+C handling
+            try:
+                signal.signal(signal.SIGINT, lambda s, f: asyncio.create_task(self.shutdown()))
+            except Exception:
+                pass
         
         logger.info(f"🔍 Starting scanning (interval: {settings.SCAN_INTERVAL}s)")
         
