@@ -1,0 +1,34 @@
+bookmakers:
+  pinnacle:
+    display_name: "Pinnacle"
+    api_available: false
+    scrape_url: "https://www.pinnacle.com"
+    priority: 1
+    
+  bet365:
+    display_name: "Bet365"
+    api_available: false
+    scrape_url: "https://www.bet365.com"
+    priority: 2
+    
+  draftkings:
+    display_name: "DraftKings"
+    api_available: false
+    scrape_url: "https://www.draftkings.com"
+    priority: 3
+
+sports:
+  - key: "basketball_nba"
+    name: "NBA Basketball"
+    priority: 1
+    markets: ["h2h", "spreads", "totals"]
+    
+  - key: "soccer_epl"
+    name: "English Premier League"
+    priority: 2
+    markets: ["h2h", "spreads", "totals"]
+    
+  - key: "americanfootball_nfl"
+    name: "NFL Football"
+    priority: 3
+    markets: ["h2h", "spreads", "totals"]
