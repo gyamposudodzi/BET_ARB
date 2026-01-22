@@ -7,6 +7,7 @@ from loguru import logger
 from datetime import datetime
 import platform
 import signal
+import json
         
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -39,6 +40,7 @@ class ArbitrageBot:
         self.is_running = False
         self.scan_count = 0
         self.opportunities_found = 0
+        self.shutdown_event = asyncio.Event()
         
     async def initialize(self):
         """Initialize all components"""
@@ -83,6 +85,7 @@ class ArbitrageBot:
             self.telegram_bot = TelegramAlertBot()
             if await self.telegram_bot.initialize():
                 await self._send_startup_message()
+                logger.info("Telegram bot connected")
         except Exception as e:
             logger.error(f"Telegram bot initialization failed: {e}")
             self.telegram_bot = None
@@ -123,19 +126,12 @@ class ArbitrageBot:
         # Setup signal handlers
         loop = asyncio.get_event_loop()
         
-
         if platform.system() != "Windows":
             for sig in (signal.SIGINT, signal.SIGTERM):
-                loop.add_signal_handler(
-                    sig,
-                    lambda sig=sig: asyncio.create_task(self.shutdown())
-                )
+                loop.add_signal_handler(sig, self.signal_handler)
         else:
-            # Windows fallback: Ctrl+C handling
-            try:
-                signal.signal(signal.SIGINT, lambda s, f: asyncio.create_task(self.shutdown()))
-            except Exception:
-                pass
+            # Windows fallback
+            signal.signal(signal.SIGINT, lambda s, f: self.signal_handler('SIGINT'))
         
         logger.info(f"🔍 Starting scanning (interval: {settings.SCAN_INTERVAL}s)")
         
@@ -148,7 +144,13 @@ class ArbitrageBot:
             logger.info("Scanning cancelled")
         except Exception as e:
             logger.error(f"Error in main loop: {e}")
+        finally:
             await self.shutdown()
+    
+    def signal_handler(self, signame=None):
+        """Handle termination signals - called from signal handlers"""
+        logger.info(f"Received signal {signame or 'SIGINT'}, shutting down...")
+        self.is_running = False
     
     async def scan_cycle(self):
         """Single scan cycle"""
@@ -247,28 +249,41 @@ class ArbitrageBot:
     
     async def shutdown(self):
         """Graceful shutdown"""
-        if not self.is_running:
+        if not self.is_running and hasattr(self, '_shutting_down'):
             return
         
-        logger.info("🛑 Shutting down...")
         self.is_running = False
+        self._shutting_down = True
         
-        # Close connections
-        if hasattr(self, 'data_collector'):
-            await self.data_collector.close()
+        logger.info("🛑 Shutting down...")
         
-        if hasattr(self, 'telegram_bot') and self.telegram_bot:
-            await self.telegram_bot.close()
+        try:
+            # Send shutdown message first (before closing connection)
+            if hasattr(self, 'telegram_bot') and self.telegram_bot and self.telegram_bot.bot:
+                try:
+                    await self.telegram_bot.send_system_alert(
+                        f"🛑 Bot stopped\nTotal scans: {self.scan_count}\nOpportunities found: {self.opportunities_found}",
+                        "info"
+                    )
+                except Exception as e:
+                    logger.error(f"Could not send shutdown message: {e}")
         
-        # Send shutdown message
-        if hasattr(self, 'telegram_bot') and self.telegram_bot:
-            await self.telegram_bot.send_system_alert(
-                f"🛑 Bot stopped\nTotal scans: {self.scan_count}\nOpportunities found: {self.opportunities_found}",
-                "info"
-            )
-        
-        logger.info(f"📊 Final stats: {self.scan_count} scans, {self.opportunities_found} opportunities")
-        logger.info("👋 Shutdown complete")
+        finally:
+            # Close connections (always execute)
+            try:
+                if hasattr(self, 'data_collector'):
+                    await self.data_collector.close()
+            except Exception as e:
+                logger.error(f"Error closing data collector: {e}")
+            
+            try:
+                if hasattr(self, 'telegram_bot') and self.telegram_bot:
+                    await self.telegram_bot.close()
+            except Exception as e:
+                logger.error(f"Error closing Telegram bot: {e}")
+            
+            logger.info(f"📊 Final stats: {self.scan_count} scans, {self.opportunities_found} opportunities")
+            logger.info("👋 Shutdown complete")
 
 async def main():
     """Main entry point"""
