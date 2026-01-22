@@ -4,7 +4,7 @@ import signal
 import sys
 from pathlib import Path
 from loguru import logger
-from datetime import datetime
+from datetime import datetime, timedelta
 import platform
 import signal
 import json
@@ -229,7 +229,8 @@ class ArbitrageBot:
             "total_investment": opportunity.total_investment,
             "guaranteed_return": opportunity.guaranteed_return,
             "stake_allocations": opportunity.stake_allocations,
-            "expiry_time": datetime.utcnow().timestamp() + settings.OPPORTUNITY_TIMEOUT,
+            # In handle_opportunity method:
+            "expiry_time": datetime.utcnow() + timedelta(seconds=settings.OPPORTUNITY_TIMEOUT),  # <-- CORRECT: Returns datetime object
             "status": "detected"
         })
         

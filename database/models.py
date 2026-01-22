@@ -88,7 +88,7 @@ class Opportunity(Base):
     __tablename__ = "opportunities"
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    event_id = Column(Integer, ForeignKey("events.id"))
+    event_id = Column(String(100), nullable=False)
     sport_key = Column(String(50), nullable=False)
     market_type = Column(String(50), nullable=False)
     
@@ -106,7 +106,7 @@ class Opportunity(Base):
     status = Column(String(20), default="detected")  # detected, executing, completed, expired
     
     # Relationships
-    event = relationship("Event")
+    #event = relationship("Event")
 
 class Alert(Base):
     __tablename__ = "alerts"

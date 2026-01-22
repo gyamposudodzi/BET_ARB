@@ -43,8 +43,9 @@ class ArbitrageCalculator:
         implied_probs = [1 / odds for odds, _, _ in outcomes]
         total_prob = sum(implied_probs)
         
-        # Check for arbitrage
-        if total_prob < 1 - (self.min_profit / 100):
+        # Check for arbitrage (convert min_profit from percentage to decimal)
+        min_profit_decimal = self.min_profit / 100
+        if total_prob < 1 - min_profit_decimal:
             profit = (1 - total_prob) * 100
             
             # Calculate stake allocations (for $100 total investment)
@@ -59,12 +60,20 @@ class ArbitrageCalculator:
             
             guaranteed_return = total_investment * (1 + profit / 100)
             
-            # For now, return placeholder event_id (will be set by detector)
+            # Create outcomes list for the opportunity
+            opportunity_outcomes = []
+            for odds, bookmaker, outcome in outcomes:
+                opportunity_outcomes.append({
+                    "bookmaker": bookmaker,
+                    "outcome": outcome,
+                    "odds": odds
+                })
+            
             return ArbitrageOpportunity(
                 event_id=0,
                 sport_key="",
                 market_type="h2h",
-                outcomes=[{"bookmaker": bm, "outcome": out, "odds": odds} for odds, bm, out in outcomes],
+                outcomes=opportunity_outcomes,
                 profit_percentage=round(profit, 2),
                 stake_allocations=stake_allocations,
                 total_investment=total_investment,
@@ -107,28 +116,73 @@ class ArbitrageCalculator:
                     outcome1 = outcomes_list[i]
                     outcome2 = outcomes_list[j]
                     
-                    # Get best odds for each outcome
-                    best_odds1 = max(
-                        [(odds, bm) for bm, odds_dict_bm in odds_dict.items() 
-                         if outcome1 in odds_dict_bm],
-                        key=lambda x: x[0]
-                    )
+                    # Get best odds for each outcome - FIXED: use odds_dict_bm[outcome] not odds
+                    best_odds1_list = [
+                        (odds_dict_bm[outcome1], bm) 
+                        for bm, odds_dict_bm in odds_dict.items() 
+                        if outcome1 in odds_dict_bm
+                    ]
                     
-                    best_odds2 = max(
-                        [(odds, bm) for bm, odds_dict_bm in odds_dict.items() 
-                         if outcome2 in odds_dict_bm],
-                        key=lambda x: x[0]
-                    )
+                    best_odds2_list = [
+                        (odds_dict_bm[outcome2], bm) 
+                        for bm, odds_dict_bm in odds_dict.items() 
+                        if outcome2 in odds_dict_bm
+                    ]
                     
-                    # Check if from different bookmakers
-                    if best_odds1[1] != best_odds2[1]:
-                        outcomes = [
-                            (best_odds1[0], best_odds1[1], outcome1),
-                            (best_odds2[0], best_odds2[1], outcome2)
-                        ]
+                    if best_odds1_list and best_odds2_list:
+                        best_odds1 = max(best_odds1_list, key=lambda x: x[0])
+                        best_odds2 = max(best_odds2_list, key=lambda x: x[0])
                         
-                        arb = self.calculate_arbitrage(outcomes)
-                        if arb:
-                            opportunities.append(arb)
+                        # Check if from different bookmakers
+                        if best_odds1[1] != best_odds2[1]:
+                            outcomes = [
+                                (best_odds1[0], best_odds1[1], outcome1),
+                                (best_odds2[0], best_odds2[1], outcome2)
+                            ]
+                            
+                            arb = self.calculate_arbitrage(outcomes)
+                            if arb:
+                                opportunities.append(arb)
         
         return opportunities
+    
+    def find_all_arbitrage_opportunities(self, events_data: List[Dict]) -> List[ArbitrageOpportunity]:
+        """
+        Find arbitrage opportunities from raw events data
+        events_data: List of events from API with bookmakers and markets
+        """
+        all_opportunities = []
+        
+        for event in events_data:
+            event_id = event.get("id", "")
+            sport_key = event.get("sport_key", "")
+            
+            # Build odds dictionary for this event
+            odds_dict = {}
+            
+            for bookmaker in event.get("bookmakers", []):
+                bookmaker_key = bookmaker.get("key", "")
+                
+                for market in bookmaker.get("markets", []):
+                    if market.get("key") == "h2h":  # Moneyline market
+                        if bookmaker_key not in odds_dict:
+                            odds_dict[bookmaker_key] = {}
+                        
+                        for outcome in market.get("outcomes", []):
+                            outcome_name = outcome.get("name", "").lower()
+                            price = outcome.get("price", 0)
+                            
+                            if price > 0:  # Only add valid odds
+                                odds_dict[bookmaker_key][outcome_name] = price
+            
+            # Find arbitrage opportunities for this event
+            event_opportunities = self.find_arbitrage_combinations(odds_dict)
+            
+            # Add event metadata to each opportunity
+            for opp in event_opportunities:
+                opp.event_id = event_id
+                opp.sport_key = sport_key
+            
+            all_opportunities.extend(event_opportunities)
+        
+        return all_opportunities
