@@ -155,9 +155,11 @@ class ArbitrageBot:
         self.scan_count += 1
         
         try:
-            from database.crud import get_crud
+            from database.session import get_session
+            from database.crud import CRUD
             
-            async for crud in get_crud():
+            async for session in get_session():
+                crud = CRUD(session)
                 # Get active sports
                 sports = await crud.get_active_sports()
                 
