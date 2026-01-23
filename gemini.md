@@ -54,8 +54,8 @@
 -   [x] Fix the Events/Odds persistence bug.
 -   [ ] **Smart Rate Limiting**: Connect `odds_api.py` to `RateLimiter` to read response headers.
 -   [x] **Interactive Telegram Bot**: Added `/status` and `/help` commands.
--   [ ] **Configuration Expansion**: Remove hardcoded limits (currently limited to 3 sports) and add bookmaker filtering in `settings.py`.
--   [ ] **Docker Support**: Add `Dockerfile` and `docker-compose.yml` for easy 24/7 server deployment.
+-   [x] **Configuration Expansion**: Removed hardcoded limit of 3 sports in `main.py`.
+-   [x] **Docker Support**: Added `Dockerfile` and `docker-compose.yml` for easy 24/7 server deployment.
 -   [ ] **Profit Analysis**: Create a script to analyze the `opportunities` table and visualize potential profit over time.
 
 ---

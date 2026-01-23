@@ -192,12 +192,12 @@ class ArbitrageBot:
                     return
                 
                 # Scan each sport
-                for sport in sports[:3]:  # Limit to 3 sports for now
+                for sport in sports:
                     await self.scan_sport(sport, crud)
                     await asyncio.sleep(1)  # Rate limiting
                 
                 # Update sport last scan time
-                for sport in sports[:3]:
+                for sport in sports:
                     await crud.update_sport_last_scan(sport.id)
                 
                 # Log stats every 10 scans

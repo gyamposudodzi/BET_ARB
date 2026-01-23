@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  bet_arb_bot:
+    build: .
+    container_name: bet_arb_bot
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./config:/app/config
+    env_file:
+      - .env
