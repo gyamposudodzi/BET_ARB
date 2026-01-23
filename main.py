@@ -171,7 +171,7 @@ class ArbitrageBot:
                 
                 # Scan each sport
                 for sport in sports[:3]:  # Limit to 3 sports for now
-                    await self.scan_sport(sport.key, crud)
+                    await self.scan_sport(sport, crud)
                     await asyncio.sleep(1)  # Rate limiting
                 
                 # Update sport last scan time
@@ -188,8 +188,9 @@ class ArbitrageBot:
         except Exception as e:
             logger.error(f"Scan cycle error: {e}")
     
-    async def scan_sport(self, sport_key: str, crud):
+    async def scan_sport(self, sport, crud):
         """Scan a specific sport for opportunities"""
+        sport_key = sport.key
         logger.debug(f"Scanning {sport_key}...")
         
         try:
@@ -202,6 +203,9 @@ class ArbitrageBot:
             if not odds_data:
                 logger.debug(f"No data for {sport_key}")
                 return
+
+            # Persist the fetched data to the database
+            await crud.process_and_store_market_data(sport.id, odds_data)
             
             # Detect arbitrage opportunities
             opportunities = await self.detector.process_api_data(odds_data)
@@ -209,33 +213,41 @@ class ArbitrageBot:
             # Process detected opportunities
             for opportunity in opportunities:
                 if opportunity.profit_percentage >= settings.MIN_PROFIT_THRESHOLD:
-                    await self.handle_opportunity(opportunity, crud)
+                    await self.handle_opportunity(opportunity, crud, sport.id)
             
             logger.debug(f"Scanned {sport_key}: {len(opportunities)} opportunities found")
             
         except Exception as e:
             logger.error(f"Error scanning {sport_key}: {e}")
     
-    async def handle_opportunity(self, opportunity, crud):
+    async def handle_opportunity(self, opportunity, crud, sport_id):
         """Handle a detected arbitrage opportunity"""
+        
+        # Get the internal event ID from the external ID
+        db_event = await crud.get_event_by_external_id(sport_id, opportunity.event_id)
+        if not db_event:
+            logger.error(f"Could not find event with external ID {opportunity.event_id} for an opportunity.")
+            return
+
         self.opportunities_found += 1
         
         # Save to database
         db_opportunity = await crud.create_opportunity({
-            "event_id": opportunity.event_id,
+            "event_id": db_event.id, # Use the internal ID
             "sport_key": opportunity.sport_key,
             "market_type": opportunity.market_type,
             "profit_percentage": opportunity.profit_percentage,
             "total_investment": opportunity.total_investment,
             "guaranteed_return": opportunity.guaranteed_return,
             "stake_allocations": opportunity.stake_allocations,
-            # In handle_opportunity method:
-            "expiry_time": datetime.utcnow() + timedelta(seconds=settings.OPPORTUNITY_TIMEOUT),  # <-- CORRECT: Returns datetime object
+            "expiry_time": datetime.utcnow() + timedelta(seconds=settings.OPPORTUNITY_TIMEOUT),
             "status": "detected"
         })
         
         # Send alert
         if self.telegram_bot:
+            # We need to update the opportunity object with the internal event ID if it's used in the alert
+            opportunity.event_id = db_event.id
             await self.telegram_bot.send_opportunity_alert(opportunity)
             
             # Also log to database
@@ -246,7 +258,7 @@ class ArbitrageBot:
                 data=opportunity.to_dict()
             )
         
-        logger.info(f"🎯 Opportunity #{self.opportunities_found}: {opportunity.profit_percentage}% profit")
+        logger.info(f"🎯 Opportunity #{self.opportunities_found} [DB:{db_opportunity.id}]: {opportunity.profit_percentage}% profit on event {db_event.home_team} vs {db_event.away_team}")
     
     async def shutdown(self):
         """Graceful shutdown"""

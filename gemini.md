@@ -1,29 +1,58 @@
-# BET_ARB Project Gemini Context
+# ♊ Gemini Project Context: BET_ARB
 
-This document provides a comprehensive overview of the BET_ARB project for the Gemini assistant, including its purpose, architecture, and ongoing development tasks.
+## 📂 Project Overview
+**Name:** BET_ARB (Sports Arbitrage Bot)
+**Goal:** An automated system to detect and alert on sports betting arbitrage opportunities ("sure bets") by comparing odds across different bookmakers (e.g., Pinnacle, Bet365).
+**Tech Stack:**
+- **Language:** Python 3.9+
+- **Core:** `asyncio` for concurrent execution.
+- **Database:** SQLite (via `aiosqlite` / custom session management).
+- **Data Source:** The Odds API.
+- **Notifications:** Telegram Bot API.
+- **Logging:** `loguru`.
 
-## Project Overview
+## 🏗️ Architecture
+1.  **`main.py`**: The central orchestrator. Runs the `scan_cycle` loop, manages the lifecycle of the bot, and handles signal interrupts.
+2.  **`data_collection/`**: Handles fetching odds from external APIs (The Odds API).
+3.  **`core/`**:
+    -   `calculations.py`: Math for arbitrage detection (implied probability, profit %).
+    -   `detector.py`: Logic to compare odds and find opportunities.
+4.  **`database/`**:
+    -   `session.py`: DB connection and initialization.
+    -   `crud.py`: Database operations (Create, Read, Update, Delete).
+    -   `models.py`: Schema definitions (Sports, Events, Odds, Opportunities).
+5.  **`alerts/`**: Telegram bot integration for sending real-time notifications.
 
-**Project Name:** BET_ARB (Sports Arbitrage Bot)
+## 📍 Current Status
+-   **Pipeline State:** Fully functional. Data persistence (Events, Odds, Opportunities) is working correctly.
+-   **Testing:** A test suite (`test_bot.py`) exists for DB, Calculations, Telegram, and API connectivity.
+-   **Data Flow:**
+    1.  Fetch odds from API.
+    2.  Store raw market data (Events/Odds) to DB.
+    3.  Detect Arbitrage.
+    4.  Store Opportunity to DB.
+    5.  Send Alert.
 
-**Purpose:** The primary goal of this project is to automatically detect arbitrage opportunities in sports betting markets and notify the user of these opportunities.
+## 🐛 Known Issues & Fixes Needed
+*(None currently critical)*
 
-**Architecture:** The application is built using Python with a modern asynchronous architecture powered by `asyncio`.
+## ✅ Resolved Issues
+### 🟢 Fixed: Empty Events/Odds Tables & Opportunity Storage Failure
+**Resolution:**
+-   Modified `scan_sport` to pass `sport_id` directly to `process_and_store_market_data` and `handle_opportunity`.
+-   Updated `handle_opportunity` to use the passed `sport_id` for efficient event lookup.
+-   Optimized database commits in `crud.py` (batch processing).
 
-**Core Components:**
-*   **Data Collector (`data_collection/odds_api.py`):** Responsible for fetching odds data from "The Odds API". It includes a fallback mechanism to generate test data, which is useful for development and testing without hitting the live API.
-*   **Database (`database/`):** Utilizes SQLAlchemy for database interaction. The schema, defined in `database/models.py`, includes tables for `sports`, `bookmakers`, `events`, `markets`, `odds`, and `opportunities`.
-*   **Arbitrage Detector & Calculator (`core/detector.py`, `core/calculations.py`):** This is the heart of the bot. It processes the raw odds data to identify and validate arbitrage opportunities based on mathematical calculations of implied probabilities.
-*   **Alerter (`alerts/telegram_bot.py`):** When a profitable opportunity is found, this component formats a message and sends it to the user via a Telegram bot.
-*   **Main Orchestrator (`main.py`):** The `ArbitrageBot` class in this file initializes all components and runs the main continuous scanning loop.
+---
 
-## Development Tasks
+## 📝 Roadmap / Next Steps
+-   [x] Fix the Events/Odds persistence bug.
+-   [ ] **Smart Rate Limiting**: Implement dynamic delays based on 'The Odds API' response headers (requests remaining) to prevent exhaustion.
+-   [ ] **Interactive Telegram Bot**: Add command handling (e.g., `/status`, `/latest`, `/profit`) so you can query the bot remotely.
+-   [ ] **Configuration Expansion**: Remove hardcoded limits (currently limited to 3 sports) and add bookmaker filtering in `settings.py`.
+-   [ ] **Docker Support**: Add `Dockerfile` and `docker-compose.yml` for easy 24/7 server deployment.
+-   [ ] **Profit Analysis**: Create a script to analyze the `opportunities` table and visualize potential profit over time.
 
-### To Be Fixed
-
-*   **Incomplete Data Persistence:** The current application logic only saves the summary of a detected arbitrage opportunity to the `opportunities` table. The detailed data that constitutes the opportunity—specifically the `Event`, `Market`, and `Odds` records from which the opportunity was derived—are not being saved to the database. This shortcut in the data pipeline results in the `events`, `markets`, and `odds` tables remaining empty.
-    *   **Impact:** This prevents historical analysis, makes the stored opportunity data less informative, and hinders future features that might rely on detailed historical odds data.
-    *   **Required Fix:** The logic needs to be updated to ensure that when an opportunity is detected and saved, the corresponding `Event`, `Market`, and `Odds` data are also persisted to the database. This will likely involve modifying the `handle_opportunity` method in `main.py` and potentially adding new CRUD operations in `database/crud.py`.
-
-### Next Steps
-*(To be populated with future ideas)*
+---
+*This file is maintained by Gemini Code Assist to track project context and tasks.*
+Last Updated: 2026-01-23

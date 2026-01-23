@@ -42,7 +42,16 @@ class CRUD:
         await self.session.commit()
     
     # Event operations
-    async def get_or_create_event(self, sport_id: int, external_id: str, **kwargs) -> Event:
+    async def get_event_by_external_id(self, sport_id: int, external_id: str) -> Optional[Event]:
+        """Get an event by its external ID and sport ID."""
+        stmt = select(Event).where(
+            Event.sport_id == sport_id,
+            Event.external_id == external_id
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_or_create_event(self, sport_id: int, external_id: str, commit: bool = True, **kwargs) -> Event:
         """Get existing event or create new one"""
         stmt = select(Event).where(
             Event.sport_id == sport_id,
@@ -66,12 +75,40 @@ class CRUD:
             )
             self.session.add(event)
         
-        await self.session.commit()
+        if commit:
+            await self.session.commit()
+        else:
+            await self.session.flush()
         await self.session.refresh(event)
         return event
+
+    async def get_or_create_market(self, event_id: int, market_type: str) -> Market:
+        """Get existing market or create a new one."""
+        stmt = select(Market).where(
+            Market.event_id == event_id,
+            Market.market_type == market_type
+        )
+        result = await self.session.execute(stmt)
+        market = result.scalar_one_or_none()
+
+        if not market:
+            market = Market(event_id=event_id, market_type=market_type)
+            self.session.add(market)
+            await self.session.flush()  # Use flush to get the ID without committing
+            await self.session.refresh(market)
+        return market
+    
+    async def get_markets_for_sport(self, sport_id: int) -> List[Market]:
+        """Get all markets for a given sport that have been recently updated."""
+        stmt = select(Market).join(Event).where(
+            Event.sport_id == sport_id,
+            Event.last_updated >= datetime.utcnow() - timedelta(minutes=5)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
     
     # Odds operations
-    async def update_odds(self, market_id: int, bookmaker_id: int, outcome: str, price: float) -> Odds:
+    async def update_odds(self, market_id: int, bookmaker_id: int, outcome: str, price: float, commit: bool = True) -> Odds:
         """Update or create odds record"""
         stmt = select(Odds).where(
             Odds.market_id == market_id,
@@ -93,7 +130,10 @@ class CRUD:
             )
             self.session.add(odds)
         
-        await self.session.commit()
+        if commit:
+            await self.session.commit()
+        else:
+            await self.session.flush()
         return odds
     
     async def get_latest_odds_for_market(self, market_id: int) -> List[Odds]:
@@ -104,6 +144,52 @@ class CRUD:
         ).order_by(Odds.bookmaker_id, Odds.outcome)
         result = await self.session.execute(stmt)
         return result.scalars().all()
+
+    async def process_and_store_market_data(self, sport_id: int, events_data: List[Dict]):
+        """
+        Process raw API data to store events, markets, and odds in the database.
+        """
+        for event_data in events_data:
+            # Convert commence_time to datetime
+            commence_time_str = event_data['commence_time']
+            if commence_time_str.endswith('Z'):
+                commence_time_str = commence_time_str[:-1] + '+00:00'
+            commence_time = datetime.fromisoformat(commence_time_str)
+
+            db_event = await self.get_or_create_event(
+                sport_id=sport_id,
+                external_id=event_data['id'],
+                home_team=event_data['home_team'],
+                away_team=event_data['away_team'],
+                commence_time=commence_time,
+                commit=False  # Defer commit until end of batch
+            )
+
+            for bookmaker_data in event_data.get('bookmakers', []):
+                bookmaker_name = bookmaker_data['key']
+                db_bookmaker = await self.get_bookmaker_by_name(bookmaker_name)
+                if not db_bookmaker:
+                    # If bookmaker is not in our DB, we skip it.
+                    # Alternatively, we could create it here. For now, we'll skip.
+                    continue
+                
+                for market_data in bookmaker_data.get('markets', []):
+                    market_type = market_data['key']
+                    db_market = await self.get_or_create_market(
+                        event_id=db_event.id,
+                        market_type=market_type
+                    )
+
+                    for outcome in market_data.get('outcomes', []):
+                        await self.update_odds(
+                            market_id=db_market.id,
+                            bookmaker_id=db_bookmaker.id,
+                            outcome=outcome['name'],
+                            price=outcome['price'],
+                            commit=False  # Defer commit until end of batch
+                        )
+        
+        await self.session.commit()
     
     # Opportunity operations
     async def create_opportunity(self, data: Dict) -> Opportunity:
