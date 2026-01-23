@@ -17,6 +17,7 @@
 3.  **`core/`**:
     -   `calculations.py`: Math for arbitrage detection (implied probability, profit %).
     -   `detector.py`: Logic to compare odds and find opportunities.
+    -   `rate_limiter.py`: Manages API quota tracking.
 4.  **`database/`**:
     -   `session.py`: DB connection and initialization.
     -   `crud.py`: Database operations (Create, Read, Update, Delete).
@@ -43,12 +44,16 @@
 -   Updated `handle_opportunity` to use the passed `sport_id` for efficient event lookup.
 -   Optimized database commits in `crud.py` (batch processing).
 
+### 🟢 Fixed: Telegram Bot Shutdown Error
+**Resolution:**
+-   Updated `alerts/telegram_bot.py` to explicitly stop the `Updater` before stopping the `Application` to prevent "Updater is still running" errors and network tracebacks on exit.
+
 ---
 
 ## 📝 Roadmap / Next Steps
 -   [x] Fix the Events/Odds persistence bug.
--   [ ] **Smart Rate Limiting**: Implement dynamic delays based on 'The Odds API' response headers (requests remaining) to prevent exhaustion.
--   [ ] **Interactive Telegram Bot**: Add command handling (e.g., `/status`, `/latest`, `/profit`) so you can query the bot remotely.
+-   [ ] **Smart Rate Limiting**: Connect `odds_api.py` to `RateLimiter` to read response headers.
+-   [x] **Interactive Telegram Bot**: Added `/status` and `/help` commands.
 -   [ ] **Configuration Expansion**: Remove hardcoded limits (currently limited to 3 sports) and add bookmaker filtering in `settings.py`.
 -   [ ] **Docker Support**: Add `Dockerfile` and `docker-compose.yml` for easy 24/7 server deployment.
 -   [ ] **Profit Analysis**: Create a script to analyze the `opportunities` table and visualize potential profit over time.

@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 # Configure logging
 from config.settings import settings
+from core.rate_limiter import RateLimiter
 
 # Remove default logger
 logger.remove()
@@ -41,6 +42,7 @@ class ArbitrageBot:
         self.scan_count = 0
         self.opportunities_found = 0
         self.shutdown_event = asyncio.Event()
+        self.rate_limiter = RateLimiter()
         
     async def initialize(self):
         """Initialize all components"""
@@ -83,6 +85,7 @@ class ArbitrageBot:
         try:
             from alerts.telegram_bot import TelegramAlertBot
             self.telegram_bot = TelegramAlertBot()
+            self.telegram_bot.set_status_provider(self.get_system_status)
             if await self.telegram_bot.initialize():
                 await self._send_startup_message()
                 logger.info("Telegram bot connected")
@@ -90,6 +93,20 @@ class ArbitrageBot:
             logger.error(f"Telegram bot initialization failed: {e}")
             self.telegram_bot = None
     
+    async def get_system_status(self):
+        """Callback to provide system status to Telegram bot"""
+        from database.session import get_db_stats
+        
+        # Get DB stats
+        db_stats = await get_db_stats()
+        
+        return {
+            "running": self.is_running,
+            "scans": self.scan_count,
+            "opportunities": self.opportunities_found,
+            "db_stats": db_stats
+        }
+
     async def _send_startup_message(self):
         """Send startup message to Telegram"""
         if self.telegram_bot:
@@ -169,6 +186,11 @@ class ArbitrageBot:
                     logger.warning("No active sports configured")
                     return
                 
+                # Check rate limits before starting a cycle
+                if self.rate_limiter.is_quota_exhausted:
+                    logger.warning("🛑 API quota exhausted. Stopping scan cycle.")
+                    return
+                
                 # Scan each sport
                 for sport in sports[:3]:  # Limit to 3 sports for now
                     await self.scan_sport(sport, crud)
@@ -197,6 +219,8 @@ class ArbitrageBot:
             # Fetch odds
             if hasattr(self.data_collector, 'get_odds') and settings.THE_ODDS_API_KEY:
                 odds_data = await self.data_collector.get_odds(sport_key)
+                # TODO: Update rate limiter with headers once odds_api.py is updated
+                # self.rate_limiter.update_from_headers(response_headers)
             else:
                 odds_data = self.data_collector.get_test_data(sport_key)
             
