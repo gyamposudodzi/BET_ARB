@@ -55,30 +55,46 @@ class ArbitrageDetector:
     async def process_api_data(self, api_data: List[Dict]) -> List[ArbitrageOpportunity]:
         """Process raw API data to find arbitrage"""
         opportunities = []
+        from core.market_mapper import MarketMapper
+        mapper = MarketMapper()
         
         for event in api_data:
-            # Extract odds from event
-            odds_dict = {}
+            # Group odds by NORMALIZED market type
+            # { "h2h": { "bookie1": {...}, "bookie2": {...} }, "totals": ... }
+            market_odds_groups = {}
             
             for bookmaker in event.get("bookmakers", []):
                 bm_key = bookmaker.get("key", "")
                 
                 for market in bookmaker.get("markets", []):
-                    if market.get("key") == "h2h":  # Moneyline market
-                        if bm_key not in odds_dict:
-                            odds_dict[bm_key] = {}
+                    raw_market_key = market.get("key")
+                    normalized_key = mapper.normalize_market_key(raw_market_key)
+                    
+                    if normalized_key not in market_odds_groups:
+                        market_odds_groups[normalized_key] = {}
                         
-                        for outcome in market.get("outcomes", []):
-                            outcome_name = outcome.get("name", "").lower()
-                            price = outcome.get("price", 0)
-                            odds_dict[bm_key][outcome_name] = price
+                    if bm_key not in market_odds_groups[normalized_key]:
+                        market_odds_groups[normalized_key][bm_key] = {}
+                    
+                    for outcome in market.get("outcomes", []):
+                        raw_outcome_name = outcome.get("name", "")
+                        outcome_name = mapper.standardize_outcome_name(raw_outcome_name, normalized_key)
+                        price = outcome.get("price", 0)
+                        market_odds_groups[normalized_key][bm_key][outcome_name] = price
             
-            # Find arbitrage in this event
-            event_opportunities = self.calculator.find_arbitrage_combinations(odds_dict)
-            
-            for opp in event_opportunities:
-                opp.event_id = event.get("id", 0)
-                opp.sport_key = event.get("sport_key", "")
-                opportunities.append(opp)
+            # Find arbitrage for EACH normalized market group
+            for market_type, odds_dict in market_odds_groups.items():
+                # We currently only support h2h calculations in the calculator 
+                # (though logic is generic, we want to be careful).
+                # The updated calculator supports n-way, so it should handle anything provided
+                # the schema matching logic finds a set.
+                
+                event_opportunities = self.calculator.find_arbitrage_combinations(odds_dict)
+                
+                for opp in event_opportunities:
+                    opp.event_id = event.get("id", 0)
+                    opp.sport_key = event.get("sport_key", "")
+                    opp.market_type = market_type # Use the normalized key
+                    opportunities.append(opp)
         
         return opportunities

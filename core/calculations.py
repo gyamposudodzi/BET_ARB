@@ -13,6 +13,7 @@ class ArbitrageOpportunity:
     stake_allocations: Dict[str, float]  # bookmaker_outcome: stake_amount
     total_investment: float
     guaranteed_return: float
+    opportunity_type: str = "arbitrage" # 'arbitrage' or 'value_bet'
     
     def to_dict(self):
         return {
@@ -52,13 +53,60 @@ class ArbitrageCalculator:
             stake_allocations = {}
             total_investment = 100.0
             
+            # Initial precise calculation
             for i, (odds, bookmaker, outcome) in enumerate(outcomes):
                 stake_percentage = implied_probs[i] / total_prob
                 stake_amount = total_investment * stake_percentage
-                key = f"{bookmaker}_{outcome}"
-                stake_allocations[key] = round(stake_amount, 2)
+                key = f"{bookmaker}|{outcome}"
+                stake_allocations[key] = stake_amount # Keep precise for now
             
-            guaranteed_return = total_investment * (1 + profit / 100)
+            # Apply Rounding if enabled
+            if settings.ROUND_STAKES and settings.ROUNDING_BASE > 0:
+                base = settings.ROUNDING_BASE
+                new_allocations = {}
+                new_total_investment = 0.0
+                
+                for key, amount in stake_allocations.items():
+                    # Round to nearest base (e.g. 5)
+                    rounded = base * round(amount / base)
+                    if rounded < base: rounded = base # Minimum bet is the base unit
+                    new_allocations[key] = float(rounded)
+                    new_total_investment += rounded
+                
+                stake_allocations = new_allocations
+                total_investment = new_total_investment
+            
+            # Recalculate Profit based on FINAL stakes
+            # Revenue = Stake * Odds (for the winning outcome)
+            # Since we don't know which one wins, we calculate the worst-case scenario
+            # to be safe, or just check that ALL scenarios yield > 0 profit.
+            
+            min_return = float('inf')
+            
+            # Check return for each outcome winning
+            for i, (odds, bookmaker, outcome) in enumerate(outcomes):
+                key = f"{bookmaker}|{outcome}"
+                stake_on_winner = stake_allocations.get(key, 0)
+                revenue = stake_on_winner * odds
+                min_return = min(min_return, revenue)
+            
+            guaranteed_return = min_return # In a perfect arb with rounding, this varies strictly.
+            total_profit = guaranteed_return - total_investment
+            profit_percentage = (total_profit / total_investment) * 100 if total_investment > 0 else 0
+            
+            # SANITY CHECK: Filter out results that are too good to be true (e.g. Outright partial matches)
+            if profit_percentage > settings.MAX_PROFIT_THRESHOLD and getattr(settings, "MAX_PROFIT_THRESHOLD", 0) > 0:
+                # Log this? for now just silently return None or maybe create a record with 'invalid' status?
+                # Returning None is safest to avoid spamming alerts.
+                return None
+            
+            # If rounding killed the profit, ignore this opportunity (unless it's value betting)
+            if profit_percentage <= 0:
+                # Optional: Log that rounding killed an arb
+                return None
+            
+            # Final formatting
+            stake_allocations = {k: round(v, 2) for k, v in stake_allocations.items()}
             
             # Create outcomes list for the opportunity
             opportunity_outcomes = []
@@ -74,9 +122,9 @@ class ArbitrageCalculator:
                 sport_key="",
                 market_type="h2h",
                 outcomes=opportunity_outcomes,
-                profit_percentage=round(profit, 2),
+                profit_percentage=round(profit_percentage, 2),
                 stake_allocations=stake_allocations,
-                total_investment=total_investment,
+                total_investment=round(total_investment, 2),
                 guaranteed_return=round(guaranteed_return, 2)
             )
         
@@ -93,57 +141,64 @@ class ArbitrageCalculator:
     
     def find_arbitrage_combinations(self, odds_dict: Dict[str, Dict[str, float]]) -> List[ArbitrageOpportunity]:
         """
-        Find all arbitrage combinations from odds dictionary
-        odds_dict: {
-            "bookmaker1": {"home": 2.1, "away": 1.8},
-            "bookmaker2": {"home": 2.0, "away": 1.9},
-        }
+        Find all arbitrage combinations from odds dictionary supporting n-way markets
+        and dynamic team names.
         """
         opportunities = []
         
-        # Extract all unique outcomes
+        # 1. Identify all unique outcomes
         all_outcomes = set()
-        for bookmaker_odds in odds_dict.values():
-            all_outcomes.update(bookmaker_odds.keys())
+        for bm_odds in odds_dict.values():
+            all_outcomes.update(bm_odds.keys())
+            
+        # 2. Categorize outcomes
+        draw_outcomes = {o for o in all_outcomes if o.lower() == 'draw' or o.lower() == 'x'}
+        competitor_outcomes = [o for o in all_outcomes if o not in draw_outcomes]
         
-        # For each outcome combination (2-way for now)
-        outcomes_list = list(all_outcomes)
+        # 3. Generate Valid Schemas
+        # We assume events usually have 2 main competitors + optional draw.
+        # If there are outcome naming discrepancies (e.g., "Man Utd" vs "Manchester United"),
+        # The Odds API should have normalized them. If not, this logic treats them as conflicting competitors
+        # and won't match them (which is safe).
         
-        if len(outcomes_list) >= 2:
-            # Check all bookmaker combinations for each outcome pair
-            for i in range(len(outcomes_list)):
-                for j in range(i + 1, len(outcomes_list)):
-                    outcome1 = outcomes_list[i]
-                    outcome2 = outcomes_list[j]
-                    
-                    # Get best odds for each outcome - FIXED: use odds_dict_bm[outcome] not odds
-                    best_odds1_list = [
-                        (odds_dict_bm[outcome1], bm) 
-                        for bm, odds_dict_bm in odds_dict.items() 
-                        if outcome1 in odds_dict_bm
-                    ]
-                    
-                    best_odds2_list = [
-                        (odds_dict_bm[outcome2], bm) 
-                        for bm, odds_dict_bm in odds_dict.items() 
-                        if outcome2 in odds_dict_bm
-                    ]
-                    
-                    if best_odds1_list and best_odds2_list:
-                        best_odds1 = max(best_odds1_list, key=lambda x: x[0])
-                        best_odds2 = max(best_odds2_list, key=lambda x: x[0])
-                        
-                        # Check if from different bookmakers
-                        if best_odds1[1] != best_odds2[1]:
-                            outcomes = [
-                                (best_odds1[0], best_odds1[1], outcome1),
-                                (best_odds2[0], best_odds2[1], outcome2)
-                            ]
-                            
-                            arb = self.calculate_arbitrage(outcomes)
-                            if arb:
-                                opportunities.append(arb)
+        generated_schemas = []
         
+        import itertools
+        
+        # Generate pairs of competitors
+        for c1, c2 in itertools.combinations(competitor_outcomes, 2):
+            # If Draw exists, prioritize 3-way schema
+            if draw_outcomes:
+                for draw in draw_outcomes:
+                    generated_schemas.append({c1, c2, draw})
+            else:
+                # No draw detected, try 2-way schema
+                generated_schemas.append({c1, c2})
+                
+        # 4. Process Schemas
+        for schema in generated_schemas:
+            best_odds_combination = []
+            possible_schema = True
+            
+            for outcome in schema:
+                # Find max odds for this specific outcome
+                valid_offers = []
+                for bm_name, bm_odds in odds_dict.items():
+                    if outcome in bm_odds:
+                        valid_offers.append((bm_odds[outcome], bm_name))
+                
+                if not valid_offers:
+                    possible_schema = False
+                    break
+                
+                best_price, best_bm = max(valid_offers, key=lambda x: x[0])
+                best_odds_combination.append((best_price, best_bm, outcome))
+            
+            if possible_schema and len(best_odds_combination) == len(schema):
+                arb = self.calculate_arbitrage(best_odds_combination)
+                if arb:
+                    opportunities.append(arb)
+
         return opportunities
     
     def find_all_arbitrage_opportunities(self, events_data: List[Dict]) -> List[ArbitrageOpportunity]:
@@ -185,4 +240,81 @@ class ArbitrageCalculator:
             
             all_opportunities.extend(event_opportunities)
         
-        return all_opportunities
+    def calculate_true_probs(self, odds_list: List[float]) -> List[float]:
+        """
+        Calculate true probabilities by removing vigorish (margin).
+        Uses a simple proportional distribution of the margin.
+        """
+        implied_probs = [1 / o for o in odds_list]
+        total_implied_prob = sum(implied_probs)
+        
+        # Normalize to sum to 1.0 (True Probability)
+        true_probs = [p / total_implied_prob for p in implied_probs]
+        return true_probs
+
+    def calculate_ev(self, odds: float, true_prob: float) -> float:
+        """
+        Calculate Expected Value %
+        EV = (Probability * Odds) - 1
+        """
+        return ((true_prob * odds) - 1) * 100
+
+    def find_value_bets(self, odds_dict: Dict[str, Dict[str, float]], sharp_bookie: str = None) -> List[ArbitrageOpportunity]:
+        """
+        Find Value Bets by comparing odds against a Sharp Bookmaker.
+        """
+        opportunities = []
+        sharp_bookie = sharp_bookie or settings.SHARP_BOOKMAKER
+        
+        # Check if Sharp Bookie exists in the data
+        if sharp_bookie not in odds_dict:
+            return [] # Cannot calculate EV without a sharp reference
+            
+        sharp_odds = odds_dict[sharp_bookie]
+        
+        # We need a complete set of outcomes from the Sharp to calculate True Probability
+        # For now, let's assume if it has outcomes, they are a complete set for that valid market type
+        # Or we can reuse our schema detection logic.
+        
+        outcomes_list = list(sharp_odds.keys())
+        odds_values = [sharp_odds[o] for o in outcomes_list]
+        
+        if not odds_values:
+            return []
+            
+        true_probs = self.calculate_true_probs(odds_values)
+        true_prob_map = dict(zip(outcomes_list, true_probs))
+        
+        # Now check all other bookmakers for value
+        for bm_name, bm_odds in odds_dict.items():
+            if bm_name == sharp_bookie:
+                continue
+                
+            for outcome, odds in bm_odds.items():
+                if outcome in true_prob_map:
+                    true_prob = true_prob_map[outcome]
+                    ev = self.calculate_ev(odds, true_prob)
+                    
+                    if ev >= settings.MIN_EV_THRESHOLD:
+                        # Found a Value Bet!
+                        
+                        # Format as an "Opportunity" object, but with special structure
+                        # Since it's a single bet, stake allocation is 100% on this outcome.
+                        
+                        stakes = {f"{bm_name}|{outcome}": settings.MAX_STAKE} 
+                        if settings.ROUND_STAKES:
+                             stakes[f"{bm_name}|{outcome}"] = float(settings.ROUNDING_BASE * round(settings.MAX_STAKE/settings.ROUNDING_BASE))
+
+                        opp = ArbitrageOpportunity(
+                            event_id=0,
+                            sport_key="",
+                            market_type="value_bet", # Special marker
+                            outcomes=[{"bookmaker": bm_name, "outcome": outcome, "odds": odds, "true_prob": round(true_prob, 3)}],
+                            profit_percentage=round(ev, 2), # Using EV as the profit metric
+                            stake_allocations=stakes,
+                            total_investment=stakes[f"{bm_name}|{outcome}"],
+                            guaranteed_return=0 # NOT guaranteed
+                        )
+                        opportunities.append(opp)
+                        
+        return opportunities

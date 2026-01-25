@@ -9,7 +9,7 @@ class TheOddsAPI:
         self.api_key = settings.THE_ODDS_API_KEY
         self.base_url = "https://api.the-odds-api.com/v4"
         self.session: Optional[aiohttp.ClientSession] = None
-        self.regions = "us"  # us, uk, eu, au
+        self.regions = settings.ODDS_API_REGIONS  # us, uk, eu, au
         self.markets = "h2h"  # h2h, spreads, totals
         self.odds_format = "decimal"
     

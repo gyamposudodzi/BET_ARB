@@ -90,7 +90,9 @@ class Opportunity(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     event_id = Column(Integer, ForeignKey("events.id"), nullable=False)
     sport_key = Column(String(50), nullable=False)
+    sport_key = Column(String(50), nullable=False)
     market_type = Column(String(50), nullable=False)
+    opportunity_type = Column(String(20), default="arbitrage") # 'arbitrage' or 'value'
     
     # Opportunity details
     profit_percentage = Column(Float, nullable=False)

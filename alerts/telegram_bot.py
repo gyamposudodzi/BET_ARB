@@ -97,6 +97,10 @@ class TelegramAlertBot:
     
     def _format_opportunity_message(self, opportunity) -> str:
         """Format opportunity as HTML message"""
+        # Dispatch to specific formatter if it's a value bet
+        if getattr(opportunity, "opportunity_type", "arbitrage") == "value_bet":
+            return self._format_value_bet_message(opportunity)
+            
         # Extract outcomes info
         outcomes_text = ""
         for outcome in opportunity.outcomes:
@@ -105,7 +109,7 @@ class TelegramAlertBot:
         # Format stakes
         stakes_text = ""
         for key, stake in opportunity.stake_allocations.items():
-            bookmaker, outcome = key.split("_")
+            bookmaker, outcome = key.split("|")
             stakes_text += f"• {bookmaker} ({outcome}): ${stake}\n"
         
         return f"""
@@ -122,6 +126,36 @@ class TelegramAlertBot:
 {stakes_text}
 
 💰 <b>Guaranteed Return:</b> ${opportunity.guaranteed_return}
+🕒 <i>Opportunity expires in {settings.OPPORTUNITY_TIMEOUT} seconds</i>
+        """
+
+    def _format_value_bet_message(self, opportunity) -> str:
+        """Format Value Bet as HTML message"""
+        # Value bet outcomes usually have just 1 item (the +EV bet)
+        outcome_data = opportunity.outcomes[0]
+        outcome_name = outcome_data['outcome']
+        bookmaker = outcome_data['bookmaker']
+        odds = outcome_data['odds']
+        true_prob = outcome_data.get('true_prob', 'N/A')
+        
+        # Get stake for this bet
+        stake = list(opportunity.stake_allocations.values())[0] if opportunity.stake_allocations else 0
+        
+        return f"""
+📈 <b>VALUE BET DETECTED!</b>
+
+💎 <b>Expected Value (ROI):</b> <code>{opportunity.profit_percentage}%</code>
+⚽ <b>Sport:</b> {opportunity.sport_key}
+🎮 <b>Market:</b> {opportunity.market_type}
+
+<b>The Bet:</b>
+• <b>{bookmaker}</b>: {outcome_name} @ <b>{odds}</b>
+
+🧠 <b>Analysis:</b>
+• True Probability: {float(true_prob)*100 if true_prob != 'N/A' else 'N/A'}%
+• Fair Odds: {round(1/float(true_prob), 2) if true_prob != 'N/A' else 'N/A'}
+
+💵 <b>Recommended Stake:</b> ${stake} (Flat)
 🕒 <i>Opportunity expires in {settings.OPPORTUNITY_TIMEOUT} seconds</i>
         """
     

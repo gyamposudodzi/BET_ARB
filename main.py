@@ -265,7 +265,8 @@ class ArbitrageBot:
             "guaranteed_return": opportunity.guaranteed_return,
             "stake_allocations": opportunity.stake_allocations,
             "expiry_time": datetime.utcnow() + timedelta(seconds=settings.OPPORTUNITY_TIMEOUT),
-            "status": "detected"
+            "status": "detected",
+            "opportunity_type": getattr(opportunity, "opportunity_type", "arbitrage")
         })
         
         # Send alert
