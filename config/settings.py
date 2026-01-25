@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     THE_ODDS_API_KEY: Optional[str] = os.getenv("THE_ODDS_API_KEY")
     ODDS_API_REGIONS: str = os.getenv("ODDS_API_REGIONS", "us,uk,eu,au") # Regions to scan
     
+    # BetsAPI (via RapidAPI)
+    RAPID_API_KEY: Optional[str] = os.getenv("RAPID_API_KEY")
+    BETS_API_ENABLED: bool = os.getenv("BETS_API_ENABLED", "False").lower() == "true"
+    
     # Trading Parameters
     MIN_PROFIT_THRESHOLD: float = float(os.getenv("MIN_PROFIT_THRESHOLD", "0.5"))
     MAX_PROFIT_THRESHOLD: float = float(os.getenv("MAX_PROFIT_THRESHOLD", "30.0")) # Sanity check to filter bad data/outrights

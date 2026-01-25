@@ -200,6 +200,10 @@ class ArbitrageBot:
                 for sport in sports:
                     await crud.update_sport_last_scan(sport.id)
                 
+                # --- Scan Secondary Source (BetsAPI) ---
+                if settings.BETS_API_ENABLED or settings.DEBUG:
+                    await self.scan_betsapi(crud)
+                
                 # Log stats every 10 scans
                 if self.scan_count % 10 == 0:
                     stats = await crud.get_stats()
@@ -243,6 +247,42 @@ class ArbitrageBot:
             
         except Exception as e:
             logger.error(f"Error scanning {sport_key}: {e}")
+
+    async def scan_betsapi(self, crud):
+        """Scan BetsAPI for additional coverage"""
+        try:
+            # For now, we hardcode Sport ID 1 (Soccer) as it's the most popular
+            # In future, iterate through a list of IDs
+            events = await self.bets_api.get_upcoming_odds("1") # 1 = Soccer
+            
+            if not events:
+                return
+
+            # Since these events are not linked to our specific DB sports, 
+            # we need a generic 'way' to handle them. 
+            # For this MVP, we just detect and alert, skipping DB storage for the raw market data
+            # unless we create a "Generic Soccer" sport in DB.
+            
+            # Use detector directly
+            opportunities = await self.detector.process_api_data(events)
+            
+            for opportunity in opportunities:
+                if opportunity.profit_percentage >= settings.MIN_PROFIT_THRESHOLD:
+                    # We pass sport_id=1 (assuming it exists) or find a generic one
+                    # To avoid crashing, we check if we have a valid DB event.
+                    # Since BetsAPI events aren't in our DB yet, this part of the integration 
+                    # requires a more complex "get_or_create_event" logic.
+                    # For now, we will ALERT ONLY (Bypass DB storage or fake it)
+                    
+                    if self.telegram_bot:
+                        await self.telegram_bot.send_opportunity_alert(opportunity)
+                        self.opportunity_count += 1
+            
+            if len(opportunities) > 0:
+                logger.debug(f"BetsAPI: Found {len(opportunities)} opportunities")
+                
+        except Exception as e:
+            logger.error(f"Error scanning BetsAPI: {e}")
     
     async def handle_opportunity(self, opportunity, crud, sport_id):
         """Handle a detected arbitrage opportunity"""
